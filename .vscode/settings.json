@@ -1,0 +1,21 @@
+{
+    "cSpell.words": [
+        "DBUILD",
+        "decap",
+        "DNAT",
+        "EBPF",
+        "ethhdr",
+        "Iinclude",
+        "iphdr",
+        "mcpu",
+        "Memlock",
+        "objs",
+        "setcap",
+        "snat",
+        "tunat",
+        "xdpmd"
+    ],
+    "C_Cpp.default.defines": [
+        "BUILD_TARGET_IFACE_LAYER=2"
+    ]
+}

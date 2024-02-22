@@ -16,7 +16,6 @@
 #error "BUILD_TARGET_IFACE_LAYER must be defined"
 #endif
 
-
 static char *be32_to_ipv4(__be32 ip_value, char *ip_buffer)
 {
     __u64 ip_data[4];
@@ -134,31 +133,40 @@ static inline void update_ip_checksum(void *data, int len, __u16 *checksum_locat
 static inline int update_checksum_after_ip_nat(struct __sk_buff *skb, struct iphdr *iph, __u32 from_addr, __u32 to_addr)
 {
     int ret = 0;
+
     // L3 checksum
-    __wsum csum_inner_ip = bpf_csum_diff(0, 0, (void *)iph, SIZE_OF_IP_HEADER, 0);
-    ret |= bpf_l3_csum_replace(skb, GET_DATA_PTR_OFFSET(skb, iph) + offsetof(struct iphdr, check), 0, csum_inner_ip, 0);
+    ret = bpf_l3_csum_replace(skb, GET_DATA_PTR_OFFSET(skb, iph) + offsetof(struct iphdr, check), from_addr, to_addr, sizeof(to_addr));
+    if (ret)
+        goto _err;
 
-    /* If the IPs have changed we must replace it as part of the pseudo header that is used to calculate L4 csum */
-    // __wsum csum_l4_diff = bpf_csum_diff(&from_addr, sizeof(from_addr), &to_addr, sizeof(to_addr), 0);
-    GET_IP_HEADER_OR_GOTO(skb, iph, _return);
+    GET_IP_HEADER_OR_GOTO(skb, iph, _err);
 
+    // L4 checksum
     __u32 l4_csum_skb_offset = 0;
-    __u64 csum_update_flags = 0;
-    if (iph->protocol == IPPROTO_UDP)
+    __u64 csum_update_flags = BPF_F_PSEUDO_HDR;
+
+    switch (iph->protocol)
     {
-        l4_csum_skb_offset = GET_DATA_PTR_OFFSET(skb, iph) + SIZE_OF_IP_HEADER + offsetof(struct udphdr, check);
+    case IPPROTO_TCP:
+        l4_csum_skb_offset = SIZE_OF_IP_HEADER + offsetof(struct tcphdr, check);
+        break;
+
+    case IPPROTO_UDP:
+        l4_csum_skb_offset = SIZE_OF_IP_HEADER + offsetof(struct udphdr, check);
         csum_update_flags |= BPF_F_MARK_MANGLED_0; // a null checksum is left untouched for UDP
+        break;
     }
-    else if (iph->protocol == IPPROTO_TCP)
-    {
-        l4_csum_skb_offset = GET_DATA_PTR_OFFSET(skb, iph) + SIZE_OF_IP_HEADER + offsetof(struct tcphdr, check);
-    }
+
     if (l4_csum_skb_offset)
     {
         // LOG_DEBUG("l4 csum update: offset:%d | %s -> %s\n", l4_csum_skb_offset, BE32_TO_IPV4(from_addr), BE32_TO_IPV4(to_addr));
-        ret |= bpf_l4_csum_replace(skb, l4_csum_skb_offset, from_addr, to_addr, csum_update_flags | BPF_F_PSEUDO_HDR | 4);
+        ret |= bpf_l4_csum_replace(skb, l4_csum_skb_offset, from_addr, to_addr, csum_update_flags | sizeof(to_addr));
+        if (ret)
+            goto _err;
     }
 
-_return:
-    return ret;
+    return 0;
+
+_err:
+    return 1;
 }

@@ -9,12 +9,14 @@ EBPF_SOURCE_H := include/bpf_prog.h
 BIN_DIST_OUT := dist/tunat
 
 BUILD_WITH_LOG_DEBUG ?= $(DEBUG)
-CLANG_ARGS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
+BUILD_VARS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
 
-TEST_INTERFACE := wg0
+# TEST_INTERFACE := wlp0s20f3
+# TEST_NAT_MAP ?= "192.168.3.69=192.168.100.100/10.32.3.69"
+TEST_INTERFACE := st-vpn
+# TEST_NAT_MAP ?= "10.208.1.2=10.101.0.31/10.32.3.69"
+TEST_NAT_MAP ?= "10.231.109.181=172.30.0.88/10.231.109.181"
 TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[\d.]+')
-TEST_NAT_MAP ?= "10.208.1.2=10.101.0.31/10.32.3.69"
-# TEST_NAT_MAP ?= "10.231.109.181=172.30.0.88/10.231.109.181"
 
 # run: ebpf
 # 	go run *.go
@@ -34,7 +36,7 @@ ebpf-clang: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 		for e in el eb; do \
 			bpf_target=bpf$$e; \
 			bin_out=dist/bpf_prog-$$l.$$e.elf; \
-			clang -target $$bpf_target -Wall -O2 -Wno-unused-function -emit-llvm -DBUILD_TARGET_IFACE_LAYER=$${l#l} -g $(CLANG_ARGS) -Iinclude -c $(EBPF_SOURCE_C) -o - | \
+			clang -target $$bpf_target -Wall -O2 -Wno-unused-function -emit-llvm -DBUILD_TARGET_IFACE_LAYER=$${l#l} $(BUILD_VARS) -g -Iinclude -c $(EBPF_SOURCE_C) -o - | \
 				llc -march=$$bpf_target -mcpu=probe -filetype=obj -o $$bin_out; \
 		done;\
 	done; \
@@ -44,7 +46,7 @@ ebpf-cilium-go: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 	@set -e -o pipefail; \
 	mkdir -p dist; \
 	for l in l2 l3; do \
-			GOPACKAGE=dist go run github.com/cilium/ebpf/cmd/bpf2go  gen$${l} bpf_prog.c -- -DBUILD_TARGET_IFACE_LAYER=$${l#l}  ; \
+			GOPACKAGE=dist go run github.com/cilium/ebpf/cmd/bpf2go  gen$${l} bpf_prog.c -- -DBUILD_TARGET_IFACE_LAYER=$${l#l} $(BUILD_VARS)  ; \
 			rm -rf gen*.go; \
 			for e in el eb; do \
 	 			bin_out=dist/bpf_prog-$$l.$$e.elf; \
@@ -74,7 +76,7 @@ trace-log:
 	sudo cat  /sys/kernel/debug/tracing/trace_pipe
 
 send-udp:
-	{ while true;do sleep 1; date; done; } | ncat 10.208.1.2 9090 -u
+	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) -u 9090
 
 send-tcp:
 	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) 80

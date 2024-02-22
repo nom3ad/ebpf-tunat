@@ -162,8 +162,7 @@ int tunat_tc_ingress(struct __sk_buff *skb)
         decap_iph->saddr = svc_ip_addr;
 
         // ----- L3/L4 checksum update ----------------
-        int ret = update_checksum_after_ip_nat(skb, decap_iph, pod_addr, svc_ip_addr);
-        if (ret)
+        if (update_checksum_after_ip_nat(skb, decap_iph, pod_addr, svc_ip_addr) != 0)
         {
             LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
             goto done;
@@ -199,7 +198,6 @@ int tunat_tc_egress(struct __sk_buff *skb)
 
     LOG_DEBUG("tc-egr: dnat-encap: %s -> %s / %s ", BE32_TO_IPV4(iph->daddr), BE32_TO_IPV4(node_ip_addr), BE32_TO_IPV4(pod_ip_addr));
 
-    int ret = 0;
     // --------- DNAT if svc_ip != pod_ip  -------------
     __u32 svc_ip_addr = iph->daddr;
     if (svc_ip_addr != pod_ip_addr)
@@ -207,17 +205,14 @@ int tunat_tc_egress(struct __sk_buff *skb)
         iph->daddr = pod_ip_addr;
 
         // --------- L3/L4 checksum update ----------------
-        ret = update_checksum_after_ip_nat(skb, iph, svc_ip_addr, pod_ip_addr);
-        if (ret)
+        if (update_checksum_after_ip_nat(skb, iph, svc_ip_addr, pod_ip_addr) != 0)
         {
             LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
             goto done;
         }
     }
-
     // ---------- IPIP encapsulation ----------------
-    ret = bpf_skb_adjust_room(skb, SIZE_OF_IP_HEADER, BPF_ADJ_ROOM_MAC, 0);
-    if (ret)
+    if (bpf_skb_adjust_room(skb, SIZE_OF_IP_HEADER, BPF_ADJ_ROOM_MAC, 0) != 0)
     {
         LOG_DEBUG("tc-egr: skb adjust room failed");
         goto done;
@@ -249,8 +244,7 @@ int tunat_tc_egress(struct __sk_buff *skb)
     // ------- IPIP L3 checksum ----------------
     outer_iph->check = 0;
     __wsum csum_outer = bpf_csum_diff(0, 0, (void *)outer_iph, SIZE_OF_IP_HEADER, 0);
-    ret = bpf_l3_csum_replace(skb, GET_DATA_PTR_OFFSET(skb, outer_iph) + offsetof(struct iphdr, check), 0, csum_outer, 0);
-    if (ret)
+    if (bpf_l3_csum_replace(skb, GET_DATA_PTR_OFFSET(skb, outer_iph) + offsetof(struct iphdr, check), 0, csum_outer, 0) != 0)
     {
         LOG_DEBUG("tc-egr: l3 csum replace failed");
         goto done;

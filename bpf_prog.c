@@ -83,32 +83,35 @@ int tunat_xdp_ingress(struct xdp_md *xdpmd)
     // ---------------- IPIP decapsulation ----------------
     bpf_xdp_adjust_head(xdpmd, (void *)inner_iph - (void *)iph);
 
-    // --- SNAT ---
+    // --- SNAT if pod_ip != svc_ip  ---
     struct iphdr *decap_iph;
     GET_IP_HEADER_OR_GOTO(xdpmd, decap_iph, done);
 
-    __u32 old_saddr = decap_iph->saddr;
-    decap_iph->saddr = svc_ip_addr;
+    __u32 pod_addr = decap_iph->saddr;
+    if (pod_addr != svc_ip_addr)
+    {
+        decap_iph->saddr = svc_ip_addr;
 
-    // --------- L3/L4 checksum update ----------------
-    update_ip_checksum(decap_iph, SIZE_OF_IP_HEADER, &decap_iph->check);
-    __sum16 *l4_csum_loc = NULL;
-    if (decap_iph->protocol == IPPROTO_UDP)
-    {
-        l4_csum_loc = (void *)decap_iph + SIZE_OF_IP_HEADER + offsetof(struct udphdr, check);
-    }
-    else if (decap_iph->protocol == IPPROTO_TCP)
-    {
-        l4_csum_loc = (void *)decap_iph + SIZE_OF_IP_HEADER + offsetof(struct tcphdr, check);
-    }
-    if (l4_csum_loc != NULL)
-    {
-        ENSURE_BOUND_OR_GOTO(xdpmd, l4_csum_loc, done);
-        //! not working
-        __sum16 sum = old_saddr + (~__bpf_ntohs(*(__u16 *)&decap_iph->saddr) & 0xffff);
-        sum += __bpf_ntohs(*l4_csum_loc);
-        sum = (sum & 0xffff) + (sum >> 16);
-        *l4_csum_loc = __bpf_htons(sum + (sum >> 16) - 1);
+        // --------- L3/L4 checksum update ----------------
+        update_ip_checksum(decap_iph, SIZE_OF_IP_HEADER, &decap_iph->check);
+        __sum16 *l4_csum_loc = NULL;
+        if (decap_iph->protocol == IPPROTO_UDP)
+        {
+            l4_csum_loc = (void *)decap_iph + SIZE_OF_IP_HEADER + offsetof(struct udphdr, check);
+        }
+        else if (decap_iph->protocol == IPPROTO_TCP)
+        {
+            l4_csum_loc = (void *)decap_iph + SIZE_OF_IP_HEADER + offsetof(struct tcphdr, check);
+        }
+        if (l4_csum_loc != NULL)
+        {
+            ENSURE_BOUND_OR_GOTO(xdpmd, l4_csum_loc, done);
+            //! not working
+            __sum16 sum = pod_addr + (~__bpf_ntohs(*(__u16 *)&decap_iph->saddr) & 0xffff);
+            sum += __bpf_ntohs(*l4_csum_loc);
+            sum = (sum & 0xffff) + (sum >> 16);
+            *l4_csum_loc = __bpf_htons(sum + (sum >> 16) - 1);
+        }
     }
 
     // ------ Ingress counter ----------------
@@ -145,23 +148,26 @@ int tunat_tc_ingress(struct __sk_buff *skb)
     __u32 svc_ip_addr = *svc_value;
 
     LOG_DEBUG("tc-ing: decap-snat : %s / %s -> %s", BE32_TO_IPV4(node_ip_addr), BE32_TO_IPV4(pod_ip_addr), BE32_TO_IPV4(svc_ip_addr));
-    
+
     // ---------------- IPIP decapsulation ----------------
     bpf_skb_adjust_room(skb, -(__u32)(SIZE_OF_IP_HEADER), BPF_ADJ_ROOM_MAC, 0);
 
-    // --- SNAT ---
+    // --- SNAT if pod_ip != svc_ip  ---
     struct iphdr *decap_iph;
     GET_IP_HEADER_OR_GOTO(skb, decap_iph, done);
 
-    __u32 old_saddr = decap_iph->saddr;
-    decap_iph->saddr = svc_ip_addr;
-
-    // ----- L3/L4 checksum update ----------------
-    int ret = update_checksum_after_ip_nat(skb, decap_iph, old_saddr, svc_ip_addr);
-    if (ret)
+    __u32 pod_addr = decap_iph->saddr;
+    if (pod_addr != svc_ip_addr)
     {
-        LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
-        goto done;
+        decap_iph->saddr = svc_ip_addr;
+
+        // ----- L3/L4 checksum update ----------------
+        int ret = update_checksum_after_ip_nat(skb, decap_iph, pod_addr, svc_ip_addr);
+        if (ret)
+        {
+            LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
+            goto done;
+        }
     }
 
     // ------ Ingress counter ----------------
@@ -172,7 +178,6 @@ int tunat_tc_ingress(struct __sk_buff *skb)
 done:
     return TC_ACT_OK;
 }
-
 
 SEC("tc_egress")
 int tunat_tc_egress(struct __sk_buff *skb)
@@ -194,18 +199,22 @@ int tunat_tc_egress(struct __sk_buff *skb)
 
     LOG_DEBUG("tc-egr: dnat-encap: %s -> %s / %s ", BE32_TO_IPV4(iph->daddr), BE32_TO_IPV4(node_ip_addr), BE32_TO_IPV4(pod_ip_addr));
 
-    // --------- DNAT ----------------
     int ret = 0;
+    // --------- DNAT if svc_ip != pod_ip  -------------
     __u32 svc_ip_addr = iph->daddr;
-    iph->daddr = pod_ip_addr;
-
-    // --------- L3/L4 checksum update ----------------
-    ret = update_checksum_after_ip_nat(skb, iph, svc_ip_addr, pod_ip_addr);
-    if (ret)
+    if (svc_ip_addr != pod_ip_addr)
     {
-        LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
-        goto done;
+        iph->daddr = pod_ip_addr;
+
+        // --------- L3/L4 checksum update ----------------
+        ret = update_checksum_after_ip_nat(skb, iph, svc_ip_addr, pod_ip_addr);
+        if (ret)
+        {
+            LOG_DEBUG("tc-egr: l3/l4 csum replace failed");
+            goto done;
+        }
     }
+
     // ---------- IPIP encapsulation ----------------
     ret = bpf_skb_adjust_room(skb, SIZE_OF_IP_HEADER, BPF_ADJ_ROOM_MAC, 0);
     if (ret)

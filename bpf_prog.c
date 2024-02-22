@@ -1,6 +1,5 @@
 // +build none
 
-#include <stdint.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>

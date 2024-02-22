@@ -14,19 +14,20 @@ CLANG_ARGS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
 TEST_INTERFACE := wg0
 TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[\d.]+')
 TEST_NAT_MAP ?= "10.208.1.2=10.101.0.31/10.32.3.69"
+# TEST_NAT_MAP ?= "10.231.109.181=172.30.0.88/10.231.109.181"
 
 # run: ebpf
 # 	go run *.go
 
 run: build
-	sudo setcap cap_net_admin,cap_sys_admin+ep $(BIN_DIST_OUT)
-	$(BIN_DIST_OUT) -iface $(TEST_INTERFACE) --src-ip $(TEST_INTERFACE_IP) -map $(TEST_NAT_MAP)
+	sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
+	$(BIN_DIST_OUT) -iface "$(TEST_INTERFACE)" --src-ip "$(TEST_INTERFACE_IP)" -map "$(TEST_NAT_MAP)"
 
-build: ebpf
+build: ebpf-cilium-go
 	# go generate && go build
 	CGO_ENABLED=0 go build -o $(BIN_DIST_OUT) .
 
-ebpf: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
+ebpf-clang: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 	@set -e -o pipefail; \
 	mkdir -p dist; \
 	for l in l2 l3; do \
@@ -36,6 +37,19 @@ ebpf: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 			clang -target $$bpf_target -Wall -O2 -Wno-unused-function -emit-llvm -DBUILD_TARGET_IFACE_LAYER=$${l#l} -g $(CLANG_ARGS) -Iinclude -c $(EBPF_SOURCE_C) -o - | \
 				llc -march=$$bpf_target -mcpu=probe -filetype=obj -o $$bin_out; \
 		done;\
+	done; \
+	ls -lh dist/*.elf
+
+ebpf-cilium-go: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
+	@set -e -o pipefail; \
+	mkdir -p dist; \
+	for l in l2 l3; do \
+			GOPACKAGE=dist go run github.com/cilium/ebpf/cmd/bpf2go  gen$${l} bpf_prog.c -- -DBUILD_TARGET_IFACE_LAYER=$${l#l}  ; \
+			rm -rf gen*.go; \
+			for e in el eb; do \
+	 			bin_out=dist/bpf_prog-$$l.$$e.elf; \
+				mv gen$${l}_bpf$$e.o  $$bin_out; \
+			done; \
 	done; \
 	ls -lh dist/*.elf
 
@@ -61,6 +75,9 @@ trace-log:
 
 send-udp:
 	{ while true;do sleep 1; date; done; } | ncat 10.208.1.2 9090 -u
+
+send-tcp:
+	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) 80
 
 map-dump:
 	sudo bpftool map -j | jq -c  '.[] | select(.name | startswith("tunat"))' 

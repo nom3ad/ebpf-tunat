@@ -1,5 +1,4 @@
 // +build none
-#include <stdint.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
@@ -97,13 +96,13 @@ static char *be32_to_ipv4(__be32 ip_value, char *ip_buffer)
 // Ref: https://github.com/zebaz/xpress-dns/blob/master/src/xdp_dns_kern.c
 // Update IP checksum for IP header, as specified in RFC 1071
 // The checksum_location is passed as a pointer. At this location 16 bits need to be set to 0.
-static inline void update_ip_checksum(void *data, int len, uint16_t *checksum_location)
+static inline void update_ip_checksum(void *data, int len, __u16 *checksum_location)
 {
-    uint32_t accumulator = 0;
+    __u32 accumulator = 0;
     int i;
     for (i = 0; i < len; i += 2)
     {
-        uint16_t val;
+        __u16 val;
         // If we are currently at the checksum_location, set to zero
         if (data + i == checksum_location)
         {
@@ -112,13 +111,13 @@ static inline void update_ip_checksum(void *data, int len, uint16_t *checksum_lo
         else
         {
             // Else we load two bytes of data into val
-            val = *(uint16_t *)(data + i);
+            val = *(__u16 *)(data + i);
         }
         accumulator += val;
     }
 
     // Add 16 bits overflow back to accumulator (if necessary)
-    uint16_t overflow = accumulator >> 16;
+    __u16 overflow = accumulator >> 16;
     accumulator &= 0x00FFFF;
     accumulator += overflow;
 
@@ -127,7 +126,7 @@ static inline void update_ip_checksum(void *data, int len, uint16_t *checksum_lo
     accumulator &= 0x00FFFF;
 
     // Invert bits and set the checksum at checksum_location
-    uint16_t chk = accumulator ^ 0xFFFF;
+    __u16 chk = accumulator ^ 0xFFFF;
 
     *checksum_location = chk;
 }

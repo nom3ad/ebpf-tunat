@@ -62,21 +62,21 @@ static char *be32_to_ipv4(__be32 ip_value, char *ip_buffer)
 
 #define GET_DATA_PTR_OFFSET(ctx, ptr) ((void *)ptr - (void *)(long)ctx->data)
 
-#define GET_IP_HEADER_OR_GOTO(ctx, iph, label) ({ \
-    void *_data = (void *)(long)ctx->data;        \
-    if (BUILD_TARGET_IFACE_LAYER == 2)            \
-    {                                             \
-        struct ethhdr *_eth = _data;              \
-        ENSURE_BOUND_OR_GOTO(ctx, _eth, label);   \
-        if (_eth->h_proto != ETH_P_IP)            \
-            goto label;                           \
-        iph = (void *)(_eth + 1);                 \
-    }                                             \
-    else                                          \
-    {                                             \
-        iph = (void *)(_data);                    \
-    }                                             \
-    ENSURE_BOUND_OR_GOTO(ctx, iph, label);        \
+#define GET_IP_HEADER_OR_GOTO(ctx, iph, label) ({   \
+    void *_data = (void *)(long)ctx->data;          \
+    if (BUILD_TARGET_IFACE_LAYER == 2)              \
+    {                                               \
+        struct ethhdr *_eth = _data;                \
+        ENSURE_BOUND_OR_GOTO(ctx, _eth, label);     \
+        if (_eth->h_proto != __bpf_htons(ETH_P_IP)) \
+            goto label;                             \
+        iph = (void *)(_eth + 1);                   \
+    }                                               \
+    else                                            \
+    {                                               \
+        iph = (void *)(_data);                      \
+    }                                               \
+    ENSURE_BOUND_OR_GOTO(ctx, iph, label);          \
 })
 
 // https://github.com/facebookincubator/katran/blob/main/katran/lib/bpf/csum_helpers.h
@@ -153,7 +153,6 @@ static inline int update_checksum_after_ip_nat(struct __sk_buff *skb, struct iph
     {
         l4_csum_skb_offset = GET_DATA_PTR_OFFSET(skb, iph) + SIZE_OF_IP_HEADER + offsetof(struct tcphdr, check);
     }
-   
     if (l4_csum_skb_offset)
     {
         // LOG_DEBUG("l4 csum update: offset:%d | %s -> %s\n", l4_csum_skb_offset, BE32_TO_IPV4(from_addr), BE32_TO_IPV4(to_addr));

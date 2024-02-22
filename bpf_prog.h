@@ -29,7 +29,7 @@ static char *be32_to_ipv4(__be32 ip_value, char *ip_buffer)
     return ip_buffer;
 }
 
-#ifdef BUILD_WITH_LOG_DEBUG
+#if BUILD_WITH_LOG_DEBUG==1
 // https://nakryiko.com/posts/bpf-tips-printk/
 #define LOG_DEBUG(fmt, ...)                                        \
     ({                                                             \

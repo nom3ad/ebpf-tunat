@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/binary"
-	"log"
 	"net"
 	"net/netip"
 	"unsafe"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/pkg/errors"
 )
@@ -56,8 +57,7 @@ func ParseIP4HostAddr(addr string) (netip.Addr, error) {
 	return ip, nil
 }
 
-
-func getNodeIP() (net.IP, error) {
+func GetNodeIP() (net.IP, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, nil

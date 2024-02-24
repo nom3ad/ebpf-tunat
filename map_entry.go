@@ -12,14 +12,34 @@ type MapEntry struct {
 	PodIP     netip.Addr
 }
 
+type ParsedMapString struct {
+	ToAdd    []MapEntry
+	ToRemove []MapEntry
+}
+
 func (e MapEntry) String() string {
 	return fmt.Sprintf("%s/%s=%s", e.ServiceIP, e.NodeIP, e.PodIP)
 }
 
-func parseMapString(mapString string) ([]MapEntry, error) {
-	var entries []MapEntry
+// sip:nip/pip
+// sip:nip
+// -sip
+func parseMapString(mapString string) (*ParsedMapString, error) {
+	var entries ParsedMapString
 	for _, s := range strings.Split(mapString, ",") {
-		parts := strings.SplitN(s, "=", 2)
+		if s[0] == '-' {
+			s = s[1:]
+			sip, err := ParseIP4HostAddr(strings.Split(s, ":")[0])
+			if err != nil {
+				return nil, fmt.Errorf("invalid Service address: %s | %v", s, err)
+			}
+			entries.ToRemove = append(entries.ToRemove, MapEntry{ServiceIP: sip})
+			continue
+		}
+		if s[0] == '+' {
+			s = s[1:]
+		}
+		parts := strings.SplitN(s, ":", 2)
 		if len(parts) != 2 {
 			return nil, fmt.Errorf("invalid entry: %s", s)
 		}
@@ -28,24 +48,28 @@ func parseMapString(mapString string) ([]MapEntry, error) {
 			return nil, fmt.Errorf("invalid Service address: %s | %v", parts[0], err)
 		}
 		parts = strings.SplitN(parts[1], "/", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid entry: %s", s)
-		}
 		nip, err := ParseIP4HostAddr(parts[0])
 		if err != nil {
 			return nil, fmt.Errorf("invalid Node address: %s | %v", parts[0], err)
 		}
-		pip, err := ParseIP4HostAddr(parts[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid Pod address: %s | %v", parts[1], err)
+		var pip netip.Addr
+		if len(parts) == 2 {
+			pip, err = ParseIP4HostAddr(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid Pod address: %s | %v", parts[1], err)
+			}
+		} else if len(parts) == 1 {
+			pip = sip
+		} else {
+			return nil, fmt.Errorf("invalid entry: %s", s)
 		}
-		entries = append(entries, MapEntry{
+		entries.ToAdd = append(entries.ToAdd, MapEntry{
 			ServiceIP: sip,
 			NodeIP:    nip,
 			PodIP:     pip,
 		})
 	}
-	return entries, nil
+	return &entries, nil
 }
 
 // var sourceIP netip.Addr

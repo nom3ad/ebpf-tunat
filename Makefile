@@ -11,32 +11,35 @@ BIN_DIST_OUT := dist/tunat
 BUILD_WITH_LOG_DEBUG ?= $(DEBUG)
 # BUILD_VARS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
 
-# TEST_INTERFACE := wlp0s20f3
-# TEST_NAT_MAP ?= "192.168.3.69=192.168.100.100/10.32.3.69"
-TEST_INTERFACE := eth0
-# TEST_NAT_MAP ?= "10.208.1.2=10.101.0.31/10.32.3.69"
-TEST_NAT_MAP ?= "10.238.57.2=172.30.0.53/10.238.57.2"
+TEST_INTERFACE := wlp0s20f3
+TEST_NAT_MAP ?= "192.168.3.69:192.168.100.100/10.32.3.69"
+# TEST_INTERFACE := eth0
+# TEST_NAT_MAP ?= "10.208.1.2:10.101.0.31/10.32.3.69"
+# TEST_NAT_MAP ?= "10.238.57.2:172.30.0.53/10.238.57.2"
 TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[\d.]+')
 
-# run: ebpf
-# 	go run *.go
+run: build
+	sudo $(BIN_DIST_OUT) $(args)
 
 run-attach: build
-	sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
-	$(BIN_DIST_OUT) attach -w -iface "$(TEST_INTERFACE)" --src-ip "$(TEST_INTERFACE_IP)" -map "$(TEST_NAT_MAP)"
+	# sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
+	sudo $(BIN_DIST_OUT) attach -w -iface "$(TEST_INTERFACE)" --src-ip "$(TEST_INTERFACE_IP)" -map "$(TEST_NAT_MAP)"
 
 run-watch: build
-	sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
-	$(BIN_DIST_OUT) watch -iface "$(TEST_INTERFACE)"
+	# sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
+	sudo $(BIN_DIST_OUT) watch -iface "$(TEST_INTERFACE)"
+
+
 
 # sudo mount bpffs -t bpf /sys/fs/bpf
 # https://archive.fosdem.org/2023/schedule/speaker/dylan_reimerink/
 # https://thegraynode.io/posts/bpftool_introduction/#tc-specific-show-commands
-detach:
-	sudo bpftool net
+bpf-unset:
+	sudo bpftool net; sudo bpftool map
 	sudo bpftool net detach xdp dev $(TEST_INTERFACE)
 	sudo tc qdisc del dev $(TEST_INTERFACE) clsact
-	sudo bpftool net
+	sudo rm -rf /sys/fs/bpf/tunat
+	sudo bpftool net; sudo bpftool map
 
 build: ebpf-cilium-go
 	# go generate && go build

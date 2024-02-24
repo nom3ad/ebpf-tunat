@@ -11,10 +11,10 @@ BIN_DIST_OUT := dist/tunat
 BUILD_WITH_LOG_DEBUG ?= $(DEBUG)
 # BUILD_VARS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
 
-TEST_INTERFACE := wlp0s20f3
-TEST_NAT_MAP ?= "192.168.3.69:192.168.100.100/10.32.3.69"
-# TEST_INTERFACE := eth0
-# TEST_NAT_MAP ?= "10.208.1.2:10.101.0.31/10.32.3.69"
+# TEST_INTERFACE := wlp0s20f3
+# TEST_NAT_MAP ?= "192.168.3.69:192.168.100.100/10.32.3.69"
+TEST_INTERFACE := eth0
+TEST_NAT_MAP ?= "10.208.1.2:10.101.0.31/10.32.3.69"
 # TEST_NAT_MAP ?= "10.238.57.2:172.30.0.53/10.238.57.2"
 TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[\d.]+')
 
@@ -27,7 +27,7 @@ run-attach: build
 
 run-watch: build
 	# sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
-	sudo $(BIN_DIST_OUT) watch -iface "$(TEST_INTERFACE)"
+	sudo $(BIN_DIST_OUT) stats -iface "$(TEST_INTERFACE)"
 
 
 

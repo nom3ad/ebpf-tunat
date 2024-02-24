@@ -33,9 +33,6 @@ func main() {
 				Usage:   "Enable debug logging",
 			},
 		},
-		ExitErrHandler: func(cCtx *cli.Context, err error) {
-			log.Fatal().Err(err)
-		},
 		Before: func(cCtx *cli.Context) error {
 			zerolog.SetGlobalLevel(zerolog.InfoLevel)
 			log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
@@ -88,7 +85,7 @@ func main() {
 					ifaceFag,
 				},
 				ArgsUsage: "map",
-				Action:    updateAction,
+				Action:    (updateAction),
 				Args:      true,
 			},
 			{
@@ -109,7 +106,7 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal().Err(err)
+		log.Fatal().Err(err).Msg("failed")
 	}
 }
 

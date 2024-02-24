@@ -13,6 +13,9 @@ function log() {
     echo -e " $msg" >&2
 }
 
+
+tunat_bin="./dist/tunat"
+
 agent_ssh_private_key=~/.ssh/jenkins-nodes.pem
 
 agent_ssh_user=ec2-user
@@ -20,7 +23,7 @@ agent_ssh_user=ec2-user
 prob_script='
     # set -x
     # ec2-metadata -o | awk "{print \$2}"
-    docker ps --filter="label=tunat.target" -q | xargs docker inspect --format "{{index .Config.Labels \"tunat.target\"}}"
+    docker ps --filter="label=tunat.target" -q | xargs --no-run-if-empty docker inspect --format "{{index .Config.Labels \"tunat.target\"}}" |xargs
 '
 
 region=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r .region)
@@ -28,27 +31,50 @@ log "Region: $region"
 
 function probe() {
     # List instances' ID and private IP address in an associated URI
-    instances=$(aws ec2 --region "$region" describe-instances --filters "Name=tag:Environment,Values=JENKINS" "Name=tag:Name,Values=*Agent*" "Name=instance-state-name,Values=running" \
-        --query "Reservations[].Instances[].[InstanceId, PrivateIpAddress]" --output text | tee /dev/stderr)
-
-    if [[ -z "$instances" ]]; then
+    local result
+    result=$(aws ec2 --region "$region" describe-instances --filters "Name=tag:Environment,Values=JENKINS" "Name=tag:Name,Values=*Agent*" "Name=instance-state-name,Values=running" \
+        --query "Reservations[].Instances[].[InstanceId, PrivateIpAddress, PublicIpAddress,Tags[?Key=='Name'].Value|[0] ]" --output text | tee /dev/stderr)
+   
+    if [[ -z "$result" ]]; then
         log WARN "No instances found"
-        exit 1
+        return 0
     fi
-    while read -r instance_id private_ip; do
-        log "Found $instance_id ($private_ip)"
+
+    readarray -t result <<<"$result"
+
+    local -a mapping=()
+    for line in "${result[@]}"; do
+        read -r instance_id private_ip public_ip _ <<<"$line"
+        log "Probing $instance_id ($private_ip)"
+        
         if ! ping -c 1 -W 1 "$private_ip" &>/dev/null; then
-            log ERROR "Instance $instance_id ($private_ip) is not reachable"
+            log ERROR "PING: Instance $instance_id ($private_ip) is not reachable"
             continue
         fi
-        local result
-        if result=$(ssh -i "$agent_ssh_private_key" -o StrictHostKeyChecking=no -o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+
+        local targets
+        if ! targets=$(ssh -i "$agent_ssh_private_key" -o StrictHostKeyChecking=no -o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
             "$agent_ssh_user@$private_ip" "$prob_script"); then
-            log OK "Probed $instance_id ($private_ip): $result"
-        else
             log ERROR "Failed to probe $instance_id ($private_ip)"
+            continue
         fi
-    done <<<"$instances"
+        if [[ -z "$targets" ]]; then
+            log WARN "Probed $instance_id ($private_ip): No targets"
+            continue
+        fi
+        log OK "Probed $instance_id ($private_ip): targets=$targets"
+
+        for target in $targets; do
+            mapping+=("$target:$private_ip/$target")
+        done
+    done
+    if [[ ${#mapping[@]} -eq 0 ]]; then
+       log WARN "No mapping to update"
+    fi
+    log "Mapping: ${mapping[*]}"
+    set -x
+    sudo $tunat_bin update -i eth0 "${mapping[@]}" || log ERROR "Failed to update mapping"
+    set +x
 }
 
 sleep_time=60s

@@ -58,12 +58,12 @@ type EbpfManager struct {
 	iface      *net.Interface
 	xdgLink    ebpf_link.Link
 	objs       progObjs
-	sm         *ServiceRegistry
 	closers    []Closer
 	hostEndian binary.ByteOrder
+	pinPath    string
 }
 
-func NewEBPFManager(ifaceName string, sm *ServiceRegistry, sourceIP netip.Addr) (*EbpfManager, error) {
+func NewEBPFManager(ifaceName string) (*EbpfManager, error) {
 	// Remove resource limits for kernels <5.11.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, errors.Wrapf(err, "failed to remove memlock")
@@ -74,6 +74,14 @@ func NewEBPFManager(ifaceName string, sm *ServiceRegistry, sourceIP netip.Addr) 
 		return nil, errors.Wrapf(err, "failed to find interface %s", ifaceName)
 	}
 	log.Printf("Found interface: %v", iface)
+
+	pinPath := "/sys/fs/bpf"
+	// if err := os.Mkdir(pinPath, 0755); err != nil {
+	// 	if !os.IsExist(err) {
+	// 		return nil, errors.Wrapf(err, "failed to create bpf pin path %s", pinPath)
+	// 	}
+	// }
+
 	variant := os.Getenv("BPF_PROG_VARIANT")
 	hostEndian := GetHostEndian()
 	if variant == "" {
@@ -108,33 +116,26 @@ func NewEBPFManager(ifaceName string, sm *ServiceRegistry, sourceIP netip.Addr) 
 		}
 	}
 
-	var objs progObjs
-
-	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		return nil, errors.Wrapf(err, "failed to load and assign ebpf objects from %s", bpfElfBinaryPath)
+	maps := []string{"tunat_state_map", "tunat_svc_to_node_pod_map", "tunat_node_pod_to_svc_map"}
+	for _, m := range maps {
+		log.Println(spec.Maps, spec.Maps[m].Pinning)
+		spec.Maps[m].Name = m + "_" + iface.Name
+		spec.Maps[m].Pinning = ebpf.PinByName
 	}
+	panic("ddd")
 	em := EbpfManager{
 		iface:      iface,
 		spec:       spec,
-		objs:       objs,
-		sm:         sm,
 		hostEndian: hostEndian,
-	}
-	em.closers = append(em.closers, objs.TcEgressProg)
-	em.closers = append(em.closers, objs.XdpIngressProg)
-	em.closers = append(em.closers, objs.CountersMap)
-	em.closers = append(em.closers, objs.SvcToNodePodMap)
-	em.closers = append(em.closers, objs.NodePodToSvcMap)
-
-	if sourceIP.IsValid() {
-		log.Printf("Setting source IP address in BPF map: %s", sourceIP)
-		err = objs.CountersMap.Update(StateIndexSourceIP, uint64(em.hostEndian.Uint32(sourceIP.AsSlice())), ebpf.UpdateAny)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to set source IP address in BPF map")
-		}
+		pinPath:    pinPath,
 	}
 
 	return &em, nil
+}
+
+func (em *EbpfManager) SetSourceIP(ip netip.Addr) error {
+	log.Printf("Setting source IP address in BPF map: %s", ip)
+	return em.objs.CountersMap.Update(StateIndexSourceIP, uint64(em.hostEndian.Uint32(ip.AsSlice())), ebpf.UpdateAny)
 }
 
 func (em *EbpfManager) getProgramGivenName(fieldName string) string {
@@ -150,25 +151,40 @@ func (em *EbpfManager) getProgramGivenName(fieldName string) string {
 	return tag
 }
 
-func (em *EbpfManager) Run() error {
+func (em *EbpfManager) Attach() error {
+
+	var objs progObjs
+	if err := em.spec.LoadAndAssign(&objs, &ebpf.CollectionOptions{
+		Maps: ebpf.MapOptions{
+			PinPath: em.pinPath,
+		},
+	}); err != nil {
+		return errors.Wrapf(err, "failed to load and assign ebpf objects")
+	}
+	log.Printf("Created ebpf manager: %v", em)
+	em.objs = objs
+	em.closers = append(em.closers, objs.TcEgressProg)
+	// em.closers = append(em.closers, objs.XdpIngressProg)
+	em.closers = append(em.closers, objs.CountersMap)
+	em.closers = append(em.closers, objs.SvcToNodePodMap)
+	em.closers = append(em.closers, objs.NodePodToSvcMap)
 
 	if os.Getenv("USE_XDP") == "1" {
-
 		xdpIngressProgName := em.getProgramGivenName("XdpIngressProg")
-		log.Printf("Attaching xdp program %s to interface %s\n", xdpIngressProgName, em.iface)
+		log.Printf("Attaching xdp program %s to interface %v\n", xdpIngressProgName, *em.iface)
 		xdgOpts := ebpf_link.XDPOptions{
-			Program:   em.objs.XdpIngressProg,
+			// Program:   em.objs.XdpIngressProg,
 			Interface: em.iface.Index,
 		}
 		xdgLink, err := ebpf_link.AttachXDP(xdgOpts)
 		if err != nil {
-			return errors.Wrapf(err, "failed to attach xdp program %s to interface %s", xdpIngressProgName, em.iface)
+			return errors.Wrapf(err, "failed to attach xdp program %s to interface %v", xdpIngressProgName, em.iface)
 		}
 		em.xdgLink = xdgLink
 		em.closers = append(em.closers, xdgLink)
 	} else {
 		tcIngressProgName := em.getProgramGivenName("TcIngressProg")
-		log.Printf("Attaching tc program %s to interface %s\n", tcIngressProgName, em.iface)
+		log.Printf("Attaching tc program %s to interface %v\n", tcIngressProgName, em.iface)
 		tcIngressOpts := TCAttachOptions{
 			Program:     em.objs.TcIngressProg,
 			ProgramName: tcIngressProgName,
@@ -195,78 +211,60 @@ func (em *EbpfManager) Run() error {
 		return errors.Wrapf(err, "failed to attach tc program %s to interface %s", tcEgressProgName, em.iface)
 	}
 	em.closers = append(em.closers, remove)
+	return nil
+}
 
-	svcUpdateChan := make(chan SvcUpdateEvent)
-	em.sm.AddUpdateChan(svcUpdateChan)
-	for _, s := range em.sm.GetAll() {
-		em.onAddService(s)
-	}
-
+func (em *EbpfManager) MapWatch() error {
 	ticker := time.NewTicker(2 * time.Second)
 	for {
-		select {
-		case <-ticker.C:
-			var ingressCount, egressCount uint64
-			var err error
-			err = em.objs.CountersMap.Lookup(StateIndexIngressPacketCount, &ingressCount)
-			if err != nil {
-				log.Fatal("Ingress counter Map lookup:", err)
-			}
-			err = em.objs.CountersMap.Lookup(StateIndexEgressPacketCount, &egressCount)
-			if err != nil {
-				log.Fatal("Egress counter Map lookup:", err)
-			}
-			log.Printf("Stats: Ingress: %d, Egress: %d", ingressCount, egressCount)
-		case svcUpdate := <-svcUpdateChan:
-			log.Printf("Service update: %v", svcUpdate)
-			if svcUpdate.EventType == "add" {
-				em.onAddService(svcUpdate.Service)
-			}
-			if svcUpdate.EventType == "remove" {
-				em.onRemoveService(svcUpdate.Service)
-			}
+		<-ticker.C
+		var ingressCount, egressCount uint64
+		var err error
+		err = em.objs.CountersMap.Lookup(StateIndexIngressPacketCount, &ingressCount)
+		if err != nil {
+			log.Fatal("Ingress counter Map lookup:", err)
+		}
+		err = em.objs.CountersMap.Lookup(StateIndexEgressPacketCount, &egressCount)
+		if err != nil {
+			log.Fatal("Egress counter Map lookup:", err)
+		}
+		log.Printf("Stats: Ingress: %d, Egress: %d", ingressCount, egressCount)
+	}
+}
+
+func (em *EbpfManager) MapInsert(entries ...MapEntry) error {
+	for _, it := range entries {
+		k := em.hostEndian.Uint32(it.ServiceIP.AsSlice())
+		v := uint64(em.hostEndian.Uint32(it.NodeIP.AsSlice()))
+		v <<= 32
+		v |= uint64(em.hostEndian.Uint32(it.PodIP.AsSlice()))
+		log.Printf("Adding service entry in BPF map %s | %d:%d", it, k, v)
+		err := em.objs.SvcToNodePodMap.Update(k, v, ebpf.UpdateAny)
+		if err != nil {
+			log.Printf("Failed to add service entry from SvcToNodePodMap BPF map: %v", err)
+			return err
+		}
+		err = em.objs.NodePodToSvcMap.Update(v, k, ebpf.UpdateAny)
+		if err != nil {
+			log.Printf("Failed to add service entry from NodePodToSvcMap BPF map: %v", err)
 		}
 	}
+	return nil
 }
 
-func (em *EbpfManager) onAddService(s ServiceInfo) {
-	k := em.hostEndian.Uint32(s.ServiceIP.AsSlice())
-	v := uint64(em.hostEndian.Uint32(s.NodeIP.AsSlice()))
-	v <<= 32
-	v |= uint64(em.hostEndian.Uint32(s.PodIP.AsSlice()))
-	log.Printf("Adding service entry in BPF map %s | %s=%s/%s | %d:%d", s.ID, s.ServiceIP, s.NodeIP, s.PodIP, k, v)
-	err := em.objs.SvcToNodePodMap.Update(k, v, ebpf.UpdateAny)
-	if err != nil {
-		log.Printf("Failed to add service entry from SvcToNodePodMap BPF map: %v", err)
-		return
-	}
-	err = em.objs.NodePodToSvcMap.Update(v, k, ebpf.UpdateAny)
-	if err != nil {
-		log.Printf("Failed to add service entry from NodePodToSvcMap BPF map: %v", err)
-	}
-}
-
-func (em *EbpfManager) onRemoveService(s ServiceInfo) {
-	k := em.hostEndian.Uint32(s.ServiceIP.AsSlice())
-	var v uint64
-	log.Printf("Removing service entry in BPF map %s | %d", s.ID, k)
-	err := em.objs.SvcToNodePodMap.LookupAndDelete(k, &v)
-	if err != nil {
-		log.Printf("Failed to remove service entry from SvcToNodePodMap BPF map: %v", err)
-		return
-	}
-	err = em.objs.NodePodToSvcMap.Delete(v)
-	if err != nil {
-		log.Printf("Failed to remove service entry  from NodePodToSvcMap BPF map: %v", err)
-	}
-
-}
-
-func (em *EbpfManager) Shutdown() error {
-	for _, c := range em.closers {
-		err := c.Close()
+func (em *EbpfManager) MapRemove(entries ...MapEntry) error {
+	for _, it := range entries {
+		k := em.hostEndian.Uint32(it.ServiceIP.AsSlice())
+		var v uint64
+		log.Printf("Removing service entry in BPF map %s | %d", it, k)
+		err := em.objs.SvcToNodePodMap.LookupAndDelete(k, &v)
 		if err != nil {
-			log.Printf("Failed to close resource: %v", err)
+			log.Printf("Failed to remove service entry from SvcToNodePodMap BPF map: %v", err)
+			return err
+		}
+		err = em.objs.NodePodToSvcMap.Delete(v)
+		if err != nil {
+			log.Printf("Failed to remove service entry  from NodePodToSvcMap BPF map: %v", err)
 		}
 	}
 	return nil

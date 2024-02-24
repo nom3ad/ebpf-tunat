@@ -38,6 +38,8 @@ struct
     __type(key, __u32);
     __type(value, __u64);
     __uint(max_entries, STATE_MAP_ENTRIES);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+
 } tunat_state_map SEC(".maps");
 
 struct
@@ -46,6 +48,7 @@ struct
     __type(key, __u32);
     __type(value, __u64);
     __uint(max_entries, MAX_SVC_MAP_ENTRIES);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } tunat_svc_to_node_pod_map SEC(".maps");
 
 struct
@@ -54,6 +57,7 @@ struct
     __type(key, __u64);
     __type(value, __u32);
     __uint(max_entries, MAX_SVC_MAP_ENTRIES);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } tunat_node_pod_to_svc_map SEC(".maps");
 
 SEC("xdp_ingress")
@@ -157,7 +161,7 @@ int tunat_tc_ingress(struct __sk_buff *skb)
     GET_IP_HEADER_OR_GOTO(skb, decap_iph, done);
 
     __u32 pod_addr = decap_iph->saddr;
-    #ifdef NAT_SUPPORT
+#ifdef NAT_SUPPORT
     if (pod_addr != svc_ip_addr)
     {
         decap_iph->saddr = svc_ip_addr;
@@ -169,7 +173,7 @@ int tunat_tc_ingress(struct __sk_buff *skb)
             goto done;
         }
     }
-    #endif
+#endif
 
     // ------ Ingress counter ----------------
     INCR_U32_TO_U64_MAP_VALUE(tunat_state_map, STATE_MAP_INDEX_INGRESS_PACKET_COUNT);
@@ -203,7 +207,7 @@ int tunat_tc_egress(struct __sk_buff *skb)
     // --------- DNAT if svc_ip != pod_ip  -------------
     __u32 svc_ip_addr = iph->daddr;
 
-    #ifdef NAT_SUPPORT
+#ifdef NAT_SUPPORT
     if (svc_ip_addr != pod_ip_addr)
     {
         iph->daddr = pod_ip_addr;
@@ -215,7 +219,7 @@ int tunat_tc_egress(struct __sk_buff *skb)
             goto done;
         }
     }
-    #endif
+#endif
     // ---------- IPIP encapsulation ----------------
     if (bpf_skb_adjust_room(skb, SIZE_OF_IP_HEADER, BPF_ADJ_ROOM_MAC, 0) != 0)
     {

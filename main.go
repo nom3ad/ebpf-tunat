@@ -4,131 +4,137 @@ package main
 // https://pkg.go.dev/github.com/hashicorp/memberlist
 
 import (
-	"flag"
 	"log"
-	"net/http"
-	"net/netip"
 	"os"
-	"os/signal"
-	"strings"
 
-	"github.com/miekg/dns"
 	"github.com/pkg/errors"
+	"github.com/urfave/cli/v2"
 )
 
-type delegate struct {
-	registry *ServiceRegistry
+var ifaceFag = &cli.StringFlag{
+	Name:     "iface",
+	Aliases:  []string{"i"},
+	Required: true,
+	Usage:    "interface name",
 }
 
 func main() {
-	// Define command-line flags
-	ifaceName := flag.String("iface", "", "Interface to attach eBPF program to")
-	mapString := flag.String("map", "", "ip mapping")
-	httpListen := flag.String("httpListen", ":8080", "Address to listen on for HTTP API")
-	sourceIPString := flag.String("src-ip", "", "Address to listen on for HTTP API")
-
-	flag.Parse()
-
-	if *ifaceName == "" {
-		log.Fatal("iface is required")
+	app := &cli.App{
+		Name:  "tunat",
+		Usage: "Tunat is EBPF based IPIP tunneling tool",
+		Commands: []*cli.Command{
+			{
+				Name:    "attach",
+				Aliases: []string{"a"},
+				Usage:   "attach tunnel to an interface",
+				Flags: []cli.Flag{
+					ifaceFag,
+					&cli.StringFlag{
+						Name:    "src-ip",
+						Aliases: []string{"s"},
+						Usage:   "source IP address",
+					},
+					&cli.StringFlag{
+						Name:    "map",
+						Aliases: []string{"m"},
+						Usage:   "tunnel map",
+					},
+					&cli.BoolFlag{
+						Name:    "watch",
+						Aliases: []string{"w"},
+						Usage:   "Watch for stats",
+					},
+				},
+				Action: attachAction,
+				Args:   false,
+			},
+			{
+				Name:    "detach",
+				Aliases: []string{"d"},
+				Usage:   "detach tunnel from an interface",
+				Flags: []cli.Flag{
+					ifaceFag,
+				},
+				// Action: detachAction,
+				Args: false,
+			},
+			{
+				Name:    "watch",
+				Aliases: []string{"w"},
+				Usage:   "watch for stats",
+				Flags: []cli.Flag{
+					ifaceFag,
+				},
+				Action: watchAction,
+			},
+		},
 	}
 
-	serviceRegistry, err := NewServiceRegistry()
+	if err := app.Run(os.Args); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func watchAction(cCtx *cli.Context) error {
+	ifaceName := cCtx.String("iface")
+
+	ebpfMgr, err := NewEBPFManager(ifaceName)
 	if err != nil {
-		panic("Failed to create service registry: " + err.Error())
-	}
-	if *mapString != "" {
-		for _, s := range strings.Split(*mapString, ",") {
-			parts := strings.SplitN(s, "=", 2)
-			if len(parts) != 2 {
-				log.Fatalf("Invalid entry: %s", s)
-			}
-			sip, err := ParseIP4HostAddr(parts[0])
-			if err != nil {
-				log.Fatalf("Invalid Service address: %s | %v", parts[0], err)
-			}
-			parts = strings.SplitN(parts[1], "/", 2)
-			if len(parts) != 2 {
-				log.Fatalf("Invalid entry: %s", s)
-			}
-			nip, err := ParseIP4HostAddr(parts[0])
-			if err != nil {
-				log.Fatalf("Invalid Node address: %s | %v", parts[0], err)
-			}
-			pip, err := ParseIP4HostAddr(parts[1])
-			if err != nil {
-				log.Fatalf("Invalid Pod address: %s | %v", parts[1], err)
-			}
-			serviceRegistry.Add(ServiceInfo{
-				ID:        s,
-				ServiceIP: sip,
-				NodeIP:    nip,
-				PodIP:     pip,
-			})
-		}
+		return errors.Wrapf(err, "failed to create ebpf manager")
 	}
 
-	var sourceIP netip.Addr
-	if *sourceIPString != "" {
-		sourceIP, err = ParseIP4HostAddr(*sourceIPString)
-		if err != nil {
-			log.Fatalf("Invalid source IP address: %s | %v", *sourceIPString, err)
-		}
-	}
-
-	ebpfMgr, err := NewEBPFManager(*ifaceName, serviceRegistry, sourceIP)
+	err = ebpfMgr.MapWatch()
 	if err != nil {
-		panic("Failed to create EBPF manager: " + err.Error())
+		return errors.Wrapf(err, "failed to watch map")
 	}
 
-	dnsServer := &dns.Server{
-		Addr:      ":8053",
-		Net:       "udp",
-		Handler:   NewDnsHandler(serviceRegistry),
-		UDPSize:   65535,
-		ReusePort: true,
+	return nil
+}
+
+func attachAction(cCtx *cli.Context) error {
+	ifaceName := cCtx.String("iface")
+	srcIP := cCtx.String("src-ip")
+	mapStr := cCtx.String("map")
+	watch := cCtx.Bool("watch")
+
+	sourceIP, err := ParseIP4HostAddr(srcIP)
+	if err != nil {
+		return errors.Wrapf(err, "invalid source IP address")
 	}
 
-	errCh := make(chan error)
+	log.Printf("iface: %s, srcIP: %s, map: %s\n", ifaceName, srcIP, mapStr)
 
-	go func() {
-		log.Printf("Starting DNS server on %s\n", dnsServer.Addr)
-		err = dnsServer.ListenAndServe()
+	ebpfMgr, err := NewEBPFManager(ifaceName)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create ebpf manager")
+	}
+
+	err = ebpfMgr.Attach()
+	if err != nil {
+		return errors.Wrapf(err, "failed to attach ebpf manager")
+	}
+
+	err = ebpfMgr.SetSourceIP(sourceIP)
+	if err != nil {
+		return errors.Wrapf(err, "failed to set source IP address in BPF map")
+	}
+	if mapStr != "" {
+		entries, err := parseMapString(mapStr)
 		if err != nil {
-			errCh <- errors.Wrapf(err, "Failed to start DNS server")
+			return errors.Wrapf(err, "failed to parse map string")
 		}
-	}()
-
-	go func() {
-		log.Printf("Starting HTTP server on %s\n", *httpListen)
-		apiService := NewAPIService(serviceRegistry)
-		err = http.ListenAndServe(*httpListen, apiService)
+		err = ebpfMgr.MapInsert(entries...)
 		if err != nil {
-			errCh <- errors.Wrapf(err, "Failed to start HTTP server")
+			return errors.Wrapf(err, "failed to set map")
 		}
-	}()
-
-	go func() {
-		err = ebpfMgr.Run()
-		if err != nil {
-			errCh <- errors.Wrapf(err, "Failed to run EBPF manager")
-		}
-	}()
-
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt)
-
-	onExit := func() {
-		log.Print("Shutting down DNS server if running")
-		dnsServer.Shutdown()
-		log.Print("Shutting down EBPF manager")
-		ebpfMgr.Shutdown()
 	}
 
-	select {
-	case err := <-errCh:
-		log.Printf("Error: %s\n", err)
-	case <-signalCh:
+	if watch {
+		err := ebpfMgr.MapWatch()
+		if err != nil {
+			return errors.Wrapf(err, "failed to watch map")
+		}
 	}
-	onExit()
+
+	return nil
 }

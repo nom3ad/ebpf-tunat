@@ -21,13 +21,27 @@ TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[
 # run: ebpf
 # 	go run *.go
 
-run: build
+run-attach: build
 	sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
-	$(BIN_DIST_OUT) -iface "$(TEST_INTERFACE)" --src-ip "$(TEST_INTERFACE_IP)" -map "$(TEST_NAT_MAP)"
+	$(BIN_DIST_OUT) attach -w -iface "$(TEST_INTERFACE)" --src-ip "$(TEST_INTERFACE_IP)" -map "$(TEST_NAT_MAP)"
+
+run-watch: build
+	sudo setcap cap_net_admin,cap_sys_resource,cap_sys_admin+ep $(BIN_DIST_OUT)
+	$(BIN_DIST_OUT) watch -iface "$(TEST_INTERFACE)"
+
+# sudo mount bpffs -t bpf /sys/fs/bpf
+# https://archive.fosdem.org/2023/schedule/speaker/dylan_reimerink/
+# https://thegraynode.io/posts/bpftool_introduction/#tc-specific-show-commands
+detach:
+	sudo bpftool net
+	sudo bpftool net detach xdp dev $(TEST_INTERFACE)
+	sudo tc qdisc del dev $(TEST_INTERFACE) clsact
+	sudo bpftool net
 
 build: ebpf-cilium-go
 	# go generate && go build
-	CGO_ENABLED=0 go build -o $(BIN_DIST_OUT) .
+	# CGO_ENABLED=0 
+	go build -o $(BIN_DIST_OUT) .
 
 ebpf-clang: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 	@set -e -o pipefail; \

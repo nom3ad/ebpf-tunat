@@ -7,6 +7,7 @@
         "ethhdr",
         "Iinclude",
         "iphdr",
+        "LIBBPF",
         "mcpu",
         "Memlock",
         "objs",

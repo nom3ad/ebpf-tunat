@@ -43,8 +43,7 @@ bpf-unset:
 
 build: ebpf-cilium-go
 	# go generate && go build
-	# CGO_ENABLED=0 
-	go build -o $(BIN_DIST_OUT) .
+	CGO_ENABLED=0 go build -o $(BIN_DIST_OUT) .
 
 ebpf-clang: $(EBPF_SOURCE_C) $(EBPF_SOURCE_H)
 	@set -e -o pipefail; \
@@ -99,5 +98,5 @@ send-tcp:
 	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) 80
 
 map-dump:
-	sudo bpftool map -j | jq -c  '.[] | select(.name | startswith("tunat"))' 
+	sudo bpftool map -j | jq -c  '.[] | select(.name | startswith("tunat"))'
 	sudo bpftool map -j | jq -c  '.[] | select(.name | startswith("tunat")) | .id' | xargs -I{} sh -c 'echo ID={};sudo bpftool map dump id {} | jq -c'

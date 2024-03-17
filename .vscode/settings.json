@@ -5,15 +5,22 @@
         "DNAT",
         "EBPF",
         "ethhdr",
+        "GOBUILD",
+        "GOCLEAN",
+        "GOCMD",
         "Iinclude",
         "iphdr",
+        "IPIP",
+        "LIBBPF",
         "mcpu",
         "Memlock",
         "objs",
         "setcap",
         "snat",
         "tunat",
-        "xdpmd"
+        "urfave",
+        "xdpmd",
+        "zerolog"
     ],
     "C_Cpp.default.defines": [
         "BUILD_TARGET_IFACE_LAYER=2"

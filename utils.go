@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/binary"
-	"log"
 	"net"
 	"net/netip"
 	"unsafe"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/pkg/errors"
 )
@@ -54,4 +55,29 @@ func ParseIP4HostAddr(addr string) (netip.Addr, error) {
 		return ip, errors.New("invalid IP4 Host address")
 	}
 	return ip, nil
+}
+
+func GetNodeIP() (net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, nil
+	}
+
+	for _, iface := range ifaces {
+		if (iface.Flags & net.FlagUp) != 0 {
+			addrs, err := iface.Addrs()
+			if err != nil {
+				return nil, err
+			}
+
+			for _, addr := range addrs {
+				ipNet, ok := addr.(*net.IPNet)
+				if ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+					return ipNet.IP, nil
+				}
+			}
+		}
+	}
+
+	return nil, errors.New("No IP address")
 }

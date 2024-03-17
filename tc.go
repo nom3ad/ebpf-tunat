@@ -1,8 +1,6 @@
 package main
 
 import (
-	"log"
-
 	"github.com/cilium/ebpf"
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
@@ -54,7 +52,7 @@ func AttachTC(opts TCAttachOptions) (CloserFunc, error) {
 	}
 
 	if err := netlink.FilterReplace(filter); err != nil {
-		log.Fatalf("cannot attach bpf object to filter: %v", err)
+		return nil, errors.Wrapf(err, "cannot attach bpf object to filter")
 	}
 
 	remove := func() error {

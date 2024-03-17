@@ -1,8 +1,5 @@
 package main
 
-// https://pkg.go.dev/github.com/libopenstorage/gossip#section-readme
-// https://pkg.go.dev/github.com/hashicorp/memberlist
-
 import (
 	"net/netip"
 	"os"
@@ -142,7 +139,10 @@ func statsAction(cCtx *cli.Context) error {
 		return errors.Wrapf(err, "failed to create ebpf manager")
 	}
 
-	ebpfMgr.DumpMap()
+	err = ebpfMgr.DumpMap()
+	if err != nil {
+		return errors.Wrapf(err, "failed to dump map")
+	}
 
 	if watch {
 		err := ebpfMgr.MapWatch()
@@ -168,7 +168,7 @@ func attachAction(cCtx *cli.Context) error {
 		}
 	}
 
-	log.Printf("iface: %s, srcIP: %s, map: %s\n", ifaceName, srcIP, mapStr)
+	log.Printf("iface: %s, srcIP: %s, map: %s", ifaceName, srcIP, mapStr)
 
 	ebpfMgr, err := NewEBPFManager(ifaceName)
 	if err != nil {

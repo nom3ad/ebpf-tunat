@@ -100,7 +100,7 @@ func NewEBPFManager(ifaceName string) (*EbpfManager, error) {
 	pinPath := "/sys/fs/bpf/tunat"
 	if err := os.Mkdir(pinPath, 0755); err != nil {
 		if !os.IsExist(err) {
-			return nil, errors.Wrapf(err, "failed to create bpf pin path %s", pinPath)
+			return nil, errors.Wrapf(err, "failed to create bpf pinpath %s", pinPath)
 		}
 	}
 
@@ -117,7 +117,7 @@ func NewEBPFManager(ifaceName string) (*EbpfManager, error) {
 		}
 	}
 	bpfElfBinaryPath := strings.Replace(bpfElfDistPathNameTemplate, "{variant}", variant, 1)
-	log.Printf("Loading ebpf elf %s\n", bpfElfBinaryPath)
+	log.Printf("Loading ebpf elf %s", bpfElfBinaryPath)
 	fBytes, err := bpfBundleInjected.ReadFile(bpfElfBinaryPath)
 	if err != nil {
 		return nil, errors.Wrapf(err, "open failed %s", bpfElfBinaryPath)
@@ -128,10 +128,10 @@ func NewEBPFManager(ifaceName string) (*EbpfManager, error) {
 	}
 
 	for k, m := range spec.Maps {
-		log.Printf("BPF Map: %s = %v\n", k, m)
+		log.Printf("BPF Map: %s = %v", k, m)
 	}
 	for k, p := range spec.Programs {
-		log.Printf("BPF Program: %s@%s typ=%s, ins=%d sz=%dB bo=%s\n", k, p.SectionName, p.Type, len(p.Instructions), p.Instructions.Size(), p.ByteOrder)
+		log.Printf("BPF Program: %s@%s typ=%s, ins=%d sz=%dB bo=%s", k, p.SectionName, p.Type, len(p.Instructions), p.Instructions.Size(), p.ByteOrder)
 		if os.Getenv("DEBUG") == "1" {
 			log.Printf("%v", p)
 		}
@@ -139,7 +139,6 @@ func NewEBPFManager(ifaceName string) (*EbpfManager, error) {
 
 	maps := []string{"tunat_state_map", "tunat_svc_to_node_pod_map", "tunat_node_pod_to_svc_map"}
 	for _, m := range maps {
-		log.Print(spec.Maps, spec.Maps[m].Pinning)
 		spec.Maps[m].Name = m + "_" + iface.Name
 		spec.Maps[m].Pinning = ebpf.PinByName
 	}
@@ -157,7 +156,7 @@ func (em *EbpfManager) getOrLoadStateMap() (*ebpf.Map, error) {
 		spec := em.spec.Maps["tunat_state_map"]
 		m, err := ebpf.NewMapWithOptions(spec, ebpf.MapOptions{PinPath: em.pinPath})
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to load state map")
+			return nil, errors.Wrapf(err, "failed to load tunat_state_map")
 		}
 		em.stateMap = m
 	}
@@ -168,7 +167,7 @@ func (em *EbpfManager) getOrLoadSvcToNodePodMap() (*ebpf.Map, error) {
 		spec := em.spec.Maps["tunat_svc_to_node_pod_map"]
 		m, err := ebpf.NewMapWithOptions(spec, ebpf.MapOptions{PinPath: em.pinPath})
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to load svc to node pod map")
+			return nil, errors.Wrapf(err, "failed to load tunat_svc_to_node_pod_map")
 		}
 		em.svcToNodePodMap = m
 	}
@@ -179,7 +178,7 @@ func (em *EbpfManager) getOrLoadNodePodToSvcMap() (*ebpf.Map, error) {
 		spec := em.spec.Maps["tunat_node_pod_to_svc_map"]
 		m, err := ebpf.NewMapWithOptions(spec, ebpf.MapOptions{PinPath: em.pinPath})
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to load node pod to svc map")
+			return nil, errors.Wrapf(err, "failed to load tunat_node_pod_to_svc_map")
 		}
 		em.nodePodToSvcMap = m
 	}
@@ -231,7 +230,7 @@ func (em *EbpfManager) Attach() error {
 
 	if os.Getenv("USE_XDP") == "1" {
 		xdpIngressProgName := em.getProgramGivenName("XdpIngressProg")
-		log.Printf("Attaching xdp program %s to interface %v\n", xdpIngressProgName, *em.iface)
+		log.Printf("Attaching xdp program %s to interface %v", xdpIngressProgName, *em.iface)
 		xdgOpts := ebpf_link.XDPOptions{
 			Program:   objs.XdpIngressProg,
 			Interface: em.iface.Index,
@@ -243,7 +242,7 @@ func (em *EbpfManager) Attach() error {
 		em.closers = append(em.closers, xdgLink)
 	} else {
 		tcIngressProgName := em.getProgramGivenName("TcIngressProg")
-		log.Printf("Attaching tc program %s to interface %v\n", tcIngressProgName, em.iface)
+		log.Printf("Attaching tc program %s to interface %v", tcIngressProgName, em.iface)
 		tcIngressOpts := TCAttachOptions{
 			Program:     objs.TcIngressProg,
 			ProgramName: tcIngressProgName,
@@ -258,7 +257,7 @@ func (em *EbpfManager) Attach() error {
 	}
 
 	tcEgressProgName := em.getProgramGivenName("TcEgressProg")
-	log.Printf("Attaching tc program %s to interface %v\n", tcEgressProgName, em.iface)
+	log.Printf("Attaching tc program %s to interface %v", tcEgressProgName, em.iface)
 	tcEgressOpts := TCAttachOptions{
 		Program:     objs.TcEgressProg,
 		ProgramName: tcEgressProgName,

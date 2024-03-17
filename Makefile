@@ -11,9 +11,8 @@ BIN_DIST_OUT := dist/tunat
 BUILD_WITH_LOG_DEBUG ?= $(DEBUG)
 # BUILD_VARS := -DBUILD_WITH_LOG_DEBUG=$(BUILD_WITH_LOG_DEBUG)
 
-# TEST_INTERFACE := wlp0s20f3
+TEST_INTERFACE := $(shell ip route | grep default | awk '{print $$5}')
 # TEST_NAT_MAP ?= "192.168.3.69:192.168.100.100/10.32.3.69"
-TEST_INTERFACE := eth0
 TEST_NAT_MAP ?= "10.208.1.2:10.101.0.31/10.32.3.69"
 # TEST_NAT_MAP ?= "10.238.57.2:172.30.0.53/10.238.57.2"
 TEST_INTERFACE_IP ?= $(shell ip addr show $(TEST_INTERFACE) | grep -oP 'inet \K[\d.]+')
@@ -92,10 +91,10 @@ trace-log:
 	sudo cat  /sys/kernel/debug/tracing/trace_pipe
 
 send-udp:
-	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) -u 9090
+	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d: -f1) -u 9090
 
 send-tcp:
-	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d= -f1) 80
+	{ while true;do sleep 1; date; done; } | ncat $$(echo $(TEST_NAT_MAP) | cut -d: -f1) 80
 
 map-dump:
 	sudo bpftool map -j | jq -c  '.[] | select(.name | startswith("tunat"))'
